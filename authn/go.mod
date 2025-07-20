@@ -10,5 +10,6 @@ require (
 
 require (
 	cloud.google.com/go/compute/metadata v0.7.0 // indirect
+	github.com/ravener/discord-oauth2 v0.0.0-20230514095040-ae65713199b3
 	golang.org/x/sys v0.33.0 // indirect
 )

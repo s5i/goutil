@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/ravener/discord-oauth2"
 	"go.uber.org/multierr"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -22,48 +23,104 @@ func New(options ...Option) (*Authn, error) {
 		return nil, errs
 	}
 
-	callbackURL, err := url.JoinPath("http://", opts.Hostname, opts.CallbackPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build callback URL: %v", err)
-	}
 	ret := &Authn{
-		oAuthCfg: &oauth2.Config{
-			ClientID:     opts.ClientID,
-			ClientSecret: opts.ClientSecret,
-			RedirectURL:  callbackURL,
+		oAuthInFlight: map[string]*oauthState{},
+		jwtSecret:     []byte(opts.JWTSecret),
+		jwtTTL:        opts.JWTTTL,
+		jwtCookieName: opts.JWTCookieName,
+		middlewareKey: randomString(32),
+	}
+
+	if opts.GoogleClientID != "" {
+		googleCallbackPath, err := url.JoinPath(opts.CallbackPath, "/google")
+		if err != nil {
+			return nil, fmt.Errorf("failed to build callback path: %v", err)
+		}
+		googleCallbackURL, err := url.JoinPath("http://", opts.Hostname, googleCallbackPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build callback URL: %v", err)
+		}
+		ret.googleCfg = &oauth2.Config{
+			ClientID:     opts.GoogleClientID,
+			ClientSecret: opts.GoogleClientSecret,
+			RedirectURL:  googleCallbackURL,
 			Scopes:       []string{"email"},
 			Endpoint:     google.Endpoint,
-		},
-		oAuthInFlight:   map[string]*oauthState{},
-		jwtSecret:       []byte(opts.JWTSecret),
-		jwtTTL:          opts.JWTTTL,
-		jwtCookieName:   opts.JWTCookieName,
-		middlewareToken: randomString(32),
+		}
+		opts.Mux.HandleFunc(googleCallbackPath, ret.googleOAuthCallback)
 	}
-	opts.Mux.HandleFunc(opts.CallbackPath, ret.oAuthCallback)
+
+	if opts.DiscordClientID != "" {
+		discordCallbackPath, err := url.JoinPath(opts.CallbackPath, "/discord")
+		if err != nil {
+			return nil, fmt.Errorf("failed to build callback path: %v", err)
+		}
+		discordCallbackURL, err := url.JoinPath("http://", opts.Hostname, discordCallbackPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build callback URL: %v", err)
+		}
+		ret.discordCfg = &oauth2.Config{
+			ClientID:     opts.DiscordClientID,
+			ClientSecret: opts.DiscordClientSecret,
+			RedirectURL:  discordCallbackURL,
+			Scopes:       []string{discord.ScopeIdentify},
+			Endpoint:     discord.Endpoint,
+		}
+		opts.Mux.HandleFunc(discordCallbackPath, ret.discordOAuthCallback)
+	}
+
+	switch {
+	case ret.googleCfg != nil:
+	case ret.discordCfg != nil:
+	default:
+		return nil, fmt.Errorf("missing OAuth provider config")
+	}
+
 	return ret, nil
 }
 
 type Option func(*opts) error
 
-// OptClientID sets the OAuth client ID.
-func OptClientID(clientID string) Option {
+// OptGoogleClientID sets the Google OAuth client ID.
+func OptGoogleClientID(clientID string) Option {
 	return func(o *opts) error {
 		if clientID == "" {
 			return fmt.Errorf("client ID cannot be empty")
 		}
-		o.ClientID = clientID
+		o.GoogleClientID = clientID
 		return nil
 	}
 }
 
-// OptClientSecret sets the OAuth client secret.
-func OptClientSecret(clientSecret string) Option {
+// OptGoogleClientSecret sets the Google OAuth client secret.
+func OptGoogleClientSecret(clientSecret string) Option {
 	return func(o *opts) error {
 		if clientSecret == "" {
 			return fmt.Errorf("client secret cannot be empty")
 		}
-		o.ClientSecret = clientSecret
+		o.GoogleClientSecret = clientSecret
+		return nil
+	}
+}
+
+// OptDiscordClientID sets the Discord OAuth client ID.
+func OptDiscordClientID(clientID string) Option {
+	return func(o *opts) error {
+		if clientID == "" {
+			return fmt.Errorf("client ID cannot be empty")
+		}
+		o.DiscordClientID = clientID
+		return nil
+	}
+}
+
+// OptDiscordClientSecret sets the Discord OAuth client secret.
+func OptDiscordClientSecret(clientSecret string) Option {
+	return func(o *opts) error {
+		if clientSecret == "" {
+			return fmt.Errorf("client secret cannot be empty")
+		}
+		o.DiscordClientSecret = clientSecret
 		return nil
 	}
 }
@@ -81,8 +138,9 @@ func OptHostname(hostname string) Option {
 	}
 }
 
-// OptCallbackPath sets the path for OAuth callbacks.
-func OptCallbackPath(callbackPath string) Option {
+// OptCallbackBasePath sets the path for OAuth callbacks.
+// The full callback path is appended with OAuth provider's specific suffix.
+func OptCallbackBasePath(callbackPath string) Option {
 	return func(o *opts) error {
 		o.CallbackPath = callbackPath
 		return nil
@@ -144,14 +202,16 @@ func OptJWTCookieName(jwtCookieName string) Option {
 }
 
 type opts struct {
-	ClientID      string
-	ClientSecret  string
-	Hostname      string
-	CallbackPath  string
-	Mux           *http.ServeMux
-	JWTSecret     string
-	JWTTTL        time.Duration
-	JWTCookieName string
+	GoogleClientID      string
+	GoogleClientSecret  string
+	DiscordClientID     string
+	DiscordClientSecret string
+	Hostname            string
+	CallbackPath        string
+	Mux                 *http.ServeMux
+	JWTSecret           string
+	JWTTTL              time.Duration
+	JWTCookieName       string
 }
 
 func newOpts() *opts {

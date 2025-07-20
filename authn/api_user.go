@@ -8,62 +8,88 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// RequireUser is a middleware function that ensures that the user is authenticated.
-// Use User to get the username.
-func (a *Authn) RequireUser(next http.Handler) http.HandlerFunc {
+// Token represents an authentication token.
+type Token struct {
+	// Required.
+	Issuer string // e.g. "google", "discord"
+	ID     string
+
+	// Optional.
+	DisplayName string
+}
+
+// RequireToken is a middleware function that ensures that the user is authenticated.
+// Use Authn.Token to get the Token.
+func (a *Authn) RequireToken(next http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		r.Header.Del(userHeader)
-		r.Header.Del(middlewareTokenHeader)
+		r.Header.Del(keyHeader)
+		r.Header.Del(providerHeader)
+		r.Header.Del(idHeader)
+		r.Header.Del(displayNameHeader)
 		for _, c := range r.Cookies() {
 			if c.Name != a.jwtCookieName {
 				continue
 			}
-			user, ok := a.jwtVerify(c.Value)
+			token, ok := a.jwtVerify(c.Value)
 			if !ok {
 				a.oAuthDialog(w, r)
 				return
 			}
-			r.Header.Add(userHeader, user)
-			r.Header.Add(middlewareTokenHeader, a.middlewareToken)
+
+			r.Header.Add(keyHeader, a.middlewareKey)
+			r.Header.Add(providerHeader, token.Issuer)
+			r.Header.Add(idHeader, token.ID)
+			r.Header.Add(displayNameHeader, token.DisplayName)
+
 			next.ServeHTTP(w, r)
 			return
 		}
 		a.oAuthDialog(w, r)
-		return
 	}
 }
 
-// User extracts username from request's headers.
-// Requires Auth.RequireUser middleware.
-func (a *Authn) User(r *http.Request) (string, bool) {
-	if r.Header.Get(middlewareTokenHeader) != a.middlewareToken {
-		return "", false
+// Token extracts an authentication Token from request's headers.
+// Requires Authn.RequireToken middleware.
+func (a *Authn) Token(r *http.Request) (*Token, bool) {
+	if r.Header.Get(keyHeader) != a.middlewareKey {
+		return nil, false
 	}
-	user := r.Header.Get(userHeader)
-	return user, user != ""
+	return UnsafeToken(r)
 }
 
-// UnsafeUser extracts username from request's headers.
+// UnsafeToken extracts an authentication Token from request's headers.
 //
 // WARNING: users can spoof the header.
-// Only use this if you are absolutely certain that Auth.RequireUser middleware was applied.
-func UnsafeUser(r *http.Request) (string, bool) {
-	user := r.Header.Get(userHeader)
-	return user, user != ""
+// Only use this if you are absolutely certain that Auth.RequireToken middleware was applied.
+func UnsafeToken(r *http.Request) (*Token, bool) {
+	t := &Token{
+		Issuer:      r.Header.Get(providerHeader),
+		ID:          r.Header.Get(idHeader),
+		DisplayName: r.Header.Get(displayNameHeader),
+	}
+	if t.Issuer == "" || t.ID == "" {
+		return nil, false
+	}
+
+	return t, true
 }
 
 // Authn provides authentication via OAuth.
 type Authn struct {
-	oAuthCfg        *oauth2.Config
+	googleCfg  *oauth2.Config
+	discordCfg *oauth2.Config
+
 	oAuthInFlightMu sync.Mutex
 	oAuthInFlight   map[string]*oauthState
 	jwtSecret       []byte
 	jwtTTL          time.Duration
 	jwtCookieName   string
-	middlewareToken string
+	middlewareKey   string
 }
 
 const (
-	userHeader            = "X-S5I-Authenticated-User"
-	middlewareTokenHeader = "X-S5I-Middleware-Token"
+	keyHeader         = "X-S5I-Authn-Key"
+	providerHeader    = "X-S5I-Authn-Token-Provider"
+	idHeader          = "X-S5I-Authn-Token-ID"
+	displayNameHeader = "X-S5I-Authn-Token-DisplayName"
 )
