@@ -2,6 +2,7 @@ package authn
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 )
 
@@ -40,7 +41,7 @@ func (a *Authn) discordOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := a.discordCfg.Client(r.Context(), tok)
-	resp, err := client.Get("https://discord.com/oauth2/@me")
+	resp, err := client.Get("https://discord.com/api/v10/users/@me")
 	if err != nil {
 		http.Error(w, "failed to fetch userinfo", http.StatusBadGateway)
 		return
@@ -48,22 +49,26 @@ func (a *Authn) discordOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 
 	dec := json.NewDecoder(resp.Body)
-	var authInfo struct {
-		User struct {
-			ID            string `json:"id"`
-			Username      string `json:"username"`
-			Discriminator string `json:"discriminator"`
-		} `json:"user"`
+	var user struct {
+		ID            string `json:"id"`
+		GlobalName    string `json:"global_name"`
+		Username      string `json:"username"`
+		Discriminator string `json:"discriminator"`
 	}
-	if err := dec.Decode(&authInfo); err != nil {
+	if err := dec.Decode(&user); err != nil {
 		http.Error(w, "failed to decode JSON response", http.StatusBadGateway)
 		return
 	}
 
+	uName := user.Username
+	if user.Discriminator != "0" {
+		uName += "#" + user.Discriminator
+	}
+
 	if err := a.jwtSetCookie(w, a.jwtCookieName, &Token{
 		Issuer:      "discord",
-		ID:          authInfo.User.ID,
-		DisplayName: authInfo.User.Username + "#" + authInfo.User.Discriminator,
+		ID:          user.ID,
+		DisplayName: fmt.Sprintf("%s (%s)", user.GlobalName, uName),
 	}); err != nil {
 		http.Error(w, "failed to build JWT", http.StatusInternalServerError)
 		return

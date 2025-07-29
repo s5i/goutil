@@ -23,9 +23,10 @@ type Token struct {
 func (a *Authn) RequireToken(next http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		r.Header.Del(keyHeader)
-		r.Header.Del(providerHeader)
+		r.Header.Del(issuerHeader)
 		r.Header.Del(idHeader)
 		r.Header.Del(displayNameHeader)
+
 		for _, c := range r.Cookies() {
 			if c.Name != a.jwtCookieName {
 				continue
@@ -37,13 +38,14 @@ func (a *Authn) RequireToken(next http.Handler) http.HandlerFunc {
 			}
 
 			r.Header.Add(keyHeader, a.middlewareKey)
-			r.Header.Add(providerHeader, token.Issuer)
+			r.Header.Add(issuerHeader, token.Issuer)
 			r.Header.Add(idHeader, token.ID)
 			r.Header.Add(displayNameHeader, token.DisplayName)
 
 			next.ServeHTTP(w, r)
 			return
 		}
+
 		a.oAuthDialog(w, r)
 	}
 }
@@ -54,6 +56,7 @@ func (a *Authn) Token(r *http.Request) (*Token, bool) {
 	if r.Header.Get(keyHeader) != a.middlewareKey {
 		return nil, false
 	}
+
 	return UnsafeToken(r)
 }
 
@@ -63,10 +66,11 @@ func (a *Authn) Token(r *http.Request) (*Token, bool) {
 // Only use this if you are absolutely certain that Auth.RequireToken middleware was applied.
 func UnsafeToken(r *http.Request) (*Token, bool) {
 	t := &Token{
-		Issuer:      r.Header.Get(providerHeader),
+		Issuer:      r.Header.Get(issuerHeader),
 		ID:          r.Header.Get(idHeader),
 		DisplayName: r.Header.Get(displayNameHeader),
 	}
+
 	if t.Issuer == "" || t.ID == "" {
 		return nil, false
 	}
@@ -89,7 +93,7 @@ type Authn struct {
 
 const (
 	keyHeader         = "X-S5I-Authn-Key"
-	providerHeader    = "X-S5I-Authn-Token-Provider"
+	issuerHeader      = "X-S5I-Authn-Token-Issuer"
 	idHeader          = "X-S5I-Authn-Token-ID"
 	displayNameHeader = "X-S5I-Authn-Token-DisplayName"
 )
