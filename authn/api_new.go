@@ -36,7 +36,7 @@ func New(options ...Option) (*Authn, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to build callback path: %v", err)
 		}
-		googleCallbackURL, err := url.JoinPath("http://", opts.Hostname, googleCallbackPath)
+		googleCallbackURL, err := url.JoinPath("https://", opts.Hostname, googleCallbackPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build callback URL: %v", err)
 		}
@@ -55,7 +55,7 @@ func New(options ...Option) (*Authn, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to build callback path: %v", err)
 		}
-		discordCallbackURL, err := url.JoinPath("http://", opts.Hostname, discordCallbackPath)
+		discordCallbackURL, err := url.JoinPath("https://", opts.Hostname, discordCallbackPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build callback URL: %v", err)
 		}
