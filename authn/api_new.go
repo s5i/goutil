@@ -1,6 +1,7 @@
 package authn
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -12,138 +13,94 @@ import (
 	"golang.org/x/oauth2/google"
 )
 
-// New instantiates an Authn object. Mandatory options are ClientID, ClientSecret, Hostname, and CallbackPath.
+// New instantiates an Authn object.
 func New(options ...Option) (*Authn, error) {
-	opts := newOpts()
-	var errs error
+	o := newOpts()
 	for _, opt := range options {
-		errs = multierr.Append(errs, opt(opts))
+		opt(o)
 	}
-	if errs != nil {
-		return nil, errs
+	if err := o.verify(); err != nil {
+		return nil, err
 	}
 
-	ret := &Authn{
+	a := &Authn{
 		oAuthInFlight: map[string]*oauthState{},
-		jwtSecret:     []byte(opts.JWTSecret),
-		jwtTTL:        opts.JWTTTL,
-		jwtCookieName: opts.JWTCookieName,
+		jwtSecret:     []byte(o.JWTSecret),
+		jwtTTL:        o.JWTTTL,
+		jwtCookieName: o.JWTCookieName,
 		middlewareKey: randomString(32),
 	}
 
-	if opts.GoogleClientID != "" {
-		googleCallbackPath, err := url.JoinPath(opts.CallbackPath, "/google")
-		if err != nil {
-			return nil, fmt.Errorf("failed to build callback path: %v", err)
-		}
-		googleCallbackURL, err := url.JoinPath("https://", opts.Hostname, googleCallbackPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to build callback URL: %v", err)
-		}
-		ret.googleCfg = &oauth2.Config{
-			ClientID:     opts.GoogleClientID,
-			ClientSecret: opts.GoogleClientSecret,
-			RedirectURL:  googleCallbackURL,
-			Scopes:       []string{"email"},
-			Endpoint:     google.Endpoint,
-		}
-		opts.Mux.HandleFunc(googleCallbackPath, ret.googleOAuthCallback)
+	if err := o.setupHandlers(a); err != nil {
+		return nil, err
 	}
 
-	if opts.DiscordClientID != "" {
-		discordCallbackPath, err := url.JoinPath(opts.CallbackPath, "/discord")
-		if err != nil {
-			return nil, fmt.Errorf("failed to build callback path: %v", err)
-		}
-		discordCallbackURL, err := url.JoinPath("https://", opts.Hostname, discordCallbackPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to build callback URL: %v", err)
-		}
-		ret.discordCfg = &oauth2.Config{
-			ClientID:     opts.DiscordClientID,
-			ClientSecret: opts.DiscordClientSecret,
-			RedirectURL:  discordCallbackURL,
-			Scopes:       []string{discord.ScopeIdentify},
-			Endpoint:     discord.Endpoint,
-		}
-		opts.Mux.HandleFunc(discordCallbackPath, ret.discordOAuthCallback)
+	if err := a.verify(); err != nil {
+		return nil, err
 	}
 
-	switch {
-	case ret.googleCfg != nil:
-	case ret.discordCfg != nil:
-	default:
-		return nil, fmt.Errorf("missing OAuth provider config")
-	}
-
-	return ret, nil
+	return a, nil
 }
 
-type Option func(*opts) error
+// GoogleOAuthConfig contains Google OAuth configuration.
+// https://console.cloud.google.com/auth/clients
+type GoogleOAuthConfig struct {
+	ClientID     string
+	ClientSecret string
+}
 
-// OptGoogleClientID sets the Google OAuth client ID.
-func OptGoogleClientID(clientID string) Option {
-	return func(o *opts) error {
-		if clientID == "" {
-			return fmt.Errorf("client ID cannot be empty")
-		}
-		o.GoogleClientID = clientID
-		return nil
+// DiscordOAuthConfig contains Discord OAuth configuration.
+// https://discord.com/developers/applications/.../oauth2
+type DiscordOAuthConfig struct {
+	ClientID     string
+	ClientSecret string
+}
+
+// FakeOAuthConfig configures fake OAuth.
+// Useful for local development and testing.
+type FakeOAuthConfig struct {
+	// Configures the returned Token.
+	IssuerFunc      func(ctx context.Context) string // default: returns "fakeoauth"
+	IDFunc          func(ctx context.Context) string // default: returns "fakeuser"
+	DisplayNameFunc func(ctx context.Context) string // default: returns "Fake User"
+}
+
+// Option is a configuration option for New.
+type Option func(*opts)
+
+// OptGoogleOAuth configures Google OAuth.
+func OptGoogleOAuth(cfg *GoogleOAuthConfig) Option {
+	return func(o *opts) {
+		o.GoogleCfg = cfg
 	}
 }
 
-// OptGoogleClientSecret sets the Google OAuth client secret.
-func OptGoogleClientSecret(clientSecret string) Option {
-	return func(o *opts) error {
-		if clientSecret == "" {
-			return fmt.Errorf("client secret cannot be empty")
-		}
-		o.GoogleClientSecret = clientSecret
-		return nil
+// OptDiscordOAuth configures Discord OAuth.
+func OptDiscordOAuth(cfg *DiscordOAuthConfig) Option {
+	return func(o *opts) {
+		o.DiscordCfg = cfg
 	}
 }
 
-// OptDiscordClientID sets the Discord OAuth client ID.
-func OptDiscordClientID(clientID string) Option {
-	return func(o *opts) error {
-		if clientID == "" {
-			return fmt.Errorf("client ID cannot be empty")
-		}
-		o.DiscordClientID = clientID
-		return nil
-	}
-}
-
-// OptDiscordClientSecret sets the Discord OAuth client secret.
-func OptDiscordClientSecret(clientSecret string) Option {
-	return func(o *opts) error {
-		if clientSecret == "" {
-			return fmt.Errorf("client secret cannot be empty")
-		}
-		o.DiscordClientSecret = clientSecret
-		return nil
+// OptFakeOAuth configures fake OAuth for local development and testing.
+func OptFakeOAuth(cfg *FakeOAuthConfig) Option {
+	return func(o *opts) {
+		o.FakeCfg = cfg
 	}
 }
 
 // OptHostname sets the hostname used for OAuth callbacks.
 func OptHostname(hostname string) Option {
-	if hostname == "" {
-		return func(o *opts) error {
-			return fmt.Errorf("hostname cannot be empty")
-		}
-	}
-	return func(o *opts) error {
+	return func(o *opts) {
 		o.Hostname = hostname
-		return nil
 	}
 }
 
 // OptCallbackBasePath sets the path for OAuth callbacks.
 // The full callback path is appended with OAuth provider's specific suffix.
 func OptCallbackBasePath(callbackPath string) Option {
-	return func(o *opts) error {
+	return func(o *opts) {
 		o.CallbackPath = callbackPath
-		return nil
 	}
 }
 
@@ -151,9 +108,8 @@ func OptCallbackBasePath(callbackPath string) Option {
 //
 // If omitted, defaults to http.DefaultServeMux.
 func OptMux(mux *http.ServeMux) Option {
-	return func(o *opts) error {
+	return func(o *opts) {
 		o.Mux = mux
-		return nil
 	}
 }
 
@@ -163,13 +119,8 @@ func OptMux(mux *http.ServeMux) Option {
 // This is OK for long-running single-instance deployments.
 // For other cases, you should provide a consistent secret to ensure JWTs can be verified across instances / restarts.
 func OptJWTSecret(jwtSecret string) Option {
-	return func(o *opts) error {
-		if jwtSecret == "" {
-			return fmt.Errorf("JWT secret cannot be empty")
-		}
-
+	return func(o *opts) {
 		o.JWTSecret = jwtSecret
-		return nil
 	}
 }
 
@@ -177,13 +128,8 @@ func OptJWTSecret(jwtSecret string) Option {
 //
 // If omitted, defaults to 24h.
 func OptJWTTTL(jwtTTL time.Duration) Option {
-	return func(o *opts) error {
-		if jwtTTL <= 0 {
-			return fmt.Errorf("JWT TTL must be greater than zero")
-		}
-
+	return func(o *opts) {
 		o.JWTTTL = jwtTTL
-		return nil
 	}
 }
 
@@ -191,27 +137,66 @@ func OptJWTTTL(jwtTTL time.Duration) Option {
 //
 // If omitted, defaults to "token".
 func OptJWTCookieName(jwtCookieName string) Option {
-	return func(o *opts) error {
-		if jwtCookieName == "" {
-			return fmt.Errorf("JWT cookie name cannot be empty")
-		}
-
+	return func(o *opts) {
 		o.JWTCookieName = jwtCookieName
-		return nil
+	}
+}
+
+// OptGoogleClientID sets the Google OAuth client ID.
+// DEPRECATED: use OptGoogleOAuth instead.
+func OptGoogleClientID(clientID string) Option {
+	return func(o *opts) {
+		if o.GoogleCfg == nil {
+			o.GoogleCfg = &GoogleOAuthConfig{}
+		}
+		o.GoogleCfg.ClientID = clientID
+	}
+}
+
+// OptGoogleClientSecret sets the Google OAuth client secret.
+// DEPRECATED: use OptGoogleOAuth instead.
+func OptGoogleClientSecret(clientSecret string) Option {
+	return func(o *opts) {
+		if o.GoogleCfg == nil {
+			o.GoogleCfg = &GoogleOAuthConfig{}
+		}
+		o.GoogleCfg.ClientSecret = clientSecret
+	}
+}
+
+// OptDiscordClientID sets the Discord OAuth client ID.
+// DEPRECATED: use OptDiscordOAuth instead.
+func OptDiscordClientID(clientID string) Option {
+	return func(o *opts) {
+		if o.DiscordCfg == nil {
+			o.DiscordCfg = &DiscordOAuthConfig{}
+		}
+		o.DiscordCfg.ClientID = clientID
+	}
+}
+
+// OptDiscordClientSecret sets the Discord OAuth client secret.
+// DEPRECATED: use OptDiscordOAuth instead.
+func OptDiscordClientSecret(clientSecret string) Option {
+	return func(o *opts) {
+		if o.DiscordCfg == nil {
+			o.DiscordCfg = &DiscordOAuthConfig{}
+		}
+		o.DiscordCfg.ClientSecret = clientSecret
 	}
 }
 
 type opts struct {
-	GoogleClientID      string
-	GoogleClientSecret  string
-	DiscordClientID     string
-	DiscordClientSecret string
-	Hostname            string
-	CallbackPath        string
-	Mux                 *http.ServeMux
-	JWTSecret           string
-	JWTTTL              time.Duration
-	JWTCookieName       string
+	GoogleCfg  *GoogleOAuthConfig
+	DiscordCfg *DiscordOAuthConfig
+	FakeCfg    *FakeOAuthConfig
+
+	Hostname      string
+	CallbackPath  string
+	Mux           *http.ServeMux
+	JWTSecret     string
+	JWTTTL        time.Duration
+	JWTCookieName string
 }
 
 func newOpts() *opts {
@@ -221,4 +206,124 @@ func newOpts() *opts {
 		JWTTTL:        24 * time.Hour,
 		JWTCookieName: "token",
 	}
+}
+
+func (o *opts) verify() error {
+	var errs error
+
+	if o.Hostname == "" {
+		errs = multierr.Append(errs, fmt.Errorf("hostname cannot be empty"))
+	}
+	if o.JWTTTL < 0 {
+		errs = multierr.Append(errs, fmt.Errorf("JWT TTL must be greater than zero"))
+	}
+	if o.JWTCookieName == "" {
+		errs = multierr.Append(errs, fmt.Errorf("JWT cookie name cannot be empty"))
+	}
+	if o.JWTSecret == "" {
+		errs = multierr.Append(errs, fmt.Errorf("JWT secret cannot be empty"))
+	}
+
+	if o.GoogleCfg != nil {
+		if o.GoogleCfg.ClientID == "" {
+			errs = multierr.Append(errs, fmt.Errorf("Google OAuth client ID cannot be empty"))
+		}
+		if o.GoogleCfg.ClientSecret == "" {
+			errs = multierr.Append(errs, fmt.Errorf("Google OAuth client secret cannot be empty"))
+		}
+	}
+
+	if o.DiscordCfg != nil {
+		if o.DiscordCfg.ClientID == "" {
+			errs = multierr.Append(errs, fmt.Errorf("Discord OAuth client ID cannot be empty"))
+		}
+		if o.DiscordCfg.ClientSecret == "" {
+			errs = multierr.Append(errs, fmt.Errorf("Discord OAuth client secret cannot be empty"))
+		}
+	}
+
+	if errs != nil {
+		return errs
+	}
+
+	return nil
+}
+
+func (o *opts) setupHandlers(a *Authn) error {
+	var errs error
+	if err := o.setupGoogleHandler(a); err != nil {
+		errs = multierr.Append(errs, err)
+	}
+	if err := o.setupDiscordHandler(a); err != nil {
+		errs = multierr.Append(errs, err)
+	}
+	a.fakeCfg = o.FakeCfg
+
+	return errs
+}
+
+func (o *opts) setupGoogleHandler(a *Authn) error {
+	if o.GoogleCfg == nil {
+		return nil
+	}
+
+	cbPath, err := url.JoinPath(o.CallbackPath, "/google")
+	if err != nil {
+		return fmt.Errorf("failed to build callback path: %v", err)
+	}
+
+	cbURL, err := url.JoinPath("https://", o.Hostname, cbPath)
+	if err != nil {
+		return fmt.Errorf("failed to build callback URL: %v", err)
+	}
+
+	a.googleCfg = &oauth2.Config{
+		ClientID:     o.GoogleCfg.ClientID,
+		ClientSecret: o.GoogleCfg.ClientSecret,
+		RedirectURL:  cbURL,
+		Scopes:       []string{"email"},
+		Endpoint:     google.Endpoint,
+	}
+	o.Mux.HandleFunc(cbPath, a.googleOAuthCallback)
+
+	return nil
+}
+
+func (o *opts) setupDiscordHandler(a *Authn) error {
+	if o.DiscordCfg == nil {
+		return nil
+	}
+
+	cbPath, err := url.JoinPath(o.CallbackPath, "/discord")
+	if err != nil {
+		return fmt.Errorf("failed to build callback path: %v", err)
+	}
+
+	cbURL, err := url.JoinPath("https://", o.Hostname, cbPath)
+	if err != nil {
+		return fmt.Errorf("failed to build callback URL: %v", err)
+	}
+
+	a.discordCfg = &oauth2.Config{
+		ClientID:     o.DiscordCfg.ClientID,
+		ClientSecret: o.DiscordCfg.ClientSecret,
+		RedirectURL:  cbURL,
+		Scopes:       []string{discord.ScopeIdentify},
+		Endpoint:     discord.Endpoint,
+	}
+	o.Mux.HandleFunc(cbPath, a.discordOAuthCallback)
+
+	return nil
+}
+
+func (a *Authn) verify() error {
+	realCfg := false
+	realCfg = realCfg || a.googleCfg != nil
+	realCfg = realCfg || a.discordCfg != nil
+	fakeCfg := a.fakeCfg != nil
+
+	if realCfg == fakeCfg {
+		return fmt.Errorf("either real OAuth provider(s) or fake OAuth must be configured, but not both")
+	}
+	return nil
 }

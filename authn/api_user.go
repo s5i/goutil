@@ -82,6 +82,7 @@ func UnsafeToken(r *http.Request) (*Token, bool) {
 type Authn struct {
 	googleCfg  *oauth2.Config
 	discordCfg *oauth2.Config
+	fakeCfg    *FakeOAuthConfig
 
 	oAuthInFlightMu sync.Mutex
 	oAuthInFlight   map[string]*oauthState

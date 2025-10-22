@@ -8,6 +8,11 @@ import (
 )
 
 func (a *Authn) oAuthDialog(w http.ResponseWriter, r *http.Request) {
+	if a.fakeCfg != nil {
+		a.fakeOAuthInject(w, r)
+		return
+	}
+
 	state := randomString(32)
 
 	var url string
