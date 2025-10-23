@@ -9,6 +9,7 @@ func (a *Authn) fakeOAuthInject(w http.ResponseWriter, r *http.Request) {
 		Issuer:      "fakeoauth",
 		ID:          "fakeuser",
 		DisplayName: "Fake User",
+		IsFake:      true,
 	}
 
 	if a.fakeCfg.IssuerFunc != nil {

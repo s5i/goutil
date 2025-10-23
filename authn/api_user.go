@@ -16,6 +16,7 @@ type Token struct {
 
 	// Optional.
 	DisplayName string
+	IsFake      bool
 }
 
 // RequireToken is a middleware function that ensures that the user is authenticated.
@@ -26,6 +27,7 @@ func (a *Authn) RequireToken(next http.Handler) http.HandlerFunc {
 		r.Header.Del(issuerHeader)
 		r.Header.Del(idHeader)
 		r.Header.Del(displayNameHeader)
+		r.Header.Del(isFakeHeader)
 
 		for _, c := range r.Cookies() {
 			if c.Name != a.jwtCookieName {
@@ -41,6 +43,9 @@ func (a *Authn) RequireToken(next http.Handler) http.HandlerFunc {
 			r.Header.Add(issuerHeader, token.Issuer)
 			r.Header.Add(idHeader, token.ID)
 			r.Header.Add(displayNameHeader, token.DisplayName)
+			if token.IsFake {
+				r.Header.Add(isFakeHeader, "1")
+			}
 
 			next.ServeHTTP(w, r)
 			return
@@ -69,6 +74,7 @@ func UnsafeToken(r *http.Request) (*Token, bool) {
 		Issuer:      r.Header.Get(issuerHeader),
 		ID:          r.Header.Get(idHeader),
 		DisplayName: r.Header.Get(displayNameHeader),
+		IsFake:      r.Header.Get(isFakeHeader) == "1",
 	}
 
 	if t.Issuer == "" || t.ID == "" {
@@ -97,4 +103,5 @@ const (
 	issuerHeader      = "X-S5I-Authn-Token-Issuer"
 	idHeader          = "X-S5I-Authn-Token-ID"
 	displayNameHeader = "X-S5I-Authn-Token-DisplayName"
+	isFakeHeader      = "X-S5I-Authn-Token-IsFake"
 )
