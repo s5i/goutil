@@ -50,12 +50,19 @@ func (a *Authn) jwtVerify(token string) (*Token, bool) {
 }
 
 func (a *Authn) jwtBuild(token *Token) (string, time.Time, error) {
+	return a.jwtBuildWithTTL(token, a.jwtTTL)
+}
+
+func (a *Authn) jwtBuildWithTTL(token *Token, ttl time.Duration) (string, time.Time, error) {
 	if token == nil {
 		return "", time.Time{}, errors.New("token cannot be nil")
 	}
+	if ttl <= 0 {
+		return "", time.Time{}, errors.New("ttl must be positive")
+	}
 
 	now := time.Now()
-	deadline := now.Add(a.jwtTTL)
+	deadline := now.Add(ttl)
 	t := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"provider":     token.Issuer,
 		"id":           token.ID,

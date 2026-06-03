@@ -84,6 +84,22 @@ func UnsafeToken(r *http.Request) (*Token, bool) {
 	return t, true
 }
 
+// SyntheticCookie builds an HTTP cookie containing a signed JWT for token.
+// ttl is the cookie and JWT lifetime; the cookie name and path come from Authn defaults.
+func (a *Authn) SyntheticCookie(token *Token, ttl time.Duration) (*http.Cookie, error) {
+	value, expires, err := a.jwtBuildWithTTL(token, ttl)
+	if err != nil {
+		return nil, err
+	}
+
+	return &http.Cookie{
+		Name:    a.jwtCookieName,
+		Value:   value,
+		Path:    "/",
+		Expires: expires,
+	}, nil
+}
+
 // Authn provides authentication via OAuth.
 type Authn struct {
 	googleCfg  *oauth2.Config
