@@ -2,6 +2,7 @@ package authn
 
 import (
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,29 +30,29 @@ func (a *Authn) RequireToken(next http.Handler) http.HandlerFunc {
 		r.Header.Del(displayNameHeader)
 		r.Header.Del(isFakeHeader)
 
-		for _, c := range r.Cookies() {
-			if c.Name != a.jwtCookieName {
-				continue
-			}
-			token, ok := a.jwtVerify(c.Value)
-			if !ok {
-				a.oAuthDialog(w, r)
-				return
+		token, ok := a.jwtVerify(strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer")))
+		for _, c := range r.CookiesNamed(a.jwtCookieName) {
+			if ok {
+				break
 			}
 
-			r.Header.Add(keyHeader, a.middlewareKey)
-			r.Header.Add(issuerHeader, token.Issuer)
-			r.Header.Add(idHeader, token.ID)
-			r.Header.Add(displayNameHeader, token.DisplayName)
-			if token.IsFake {
-				r.Header.Add(isFakeHeader, "1")
-			}
+			token, ok = a.jwtVerify(c.Value)
+		}
 
-			next.ServeHTTP(w, r)
+		if !ok {
+			a.oAuthDialog(w, r)
 			return
 		}
 
-		a.oAuthDialog(w, r)
+		r.Header.Add(keyHeader, a.middlewareKey)
+		r.Header.Add(issuerHeader, token.Issuer)
+		r.Header.Add(idHeader, token.ID)
+		r.Header.Add(displayNameHeader, token.DisplayName)
+		if token.IsFake {
+			r.Header.Add(isFakeHeader, "1")
+		}
+
+		next.ServeHTTP(w, r)
 	}
 }
 
