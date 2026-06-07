@@ -142,50 +142,6 @@ func OptJWTCookieName(jwtCookieName string) Option {
 	}
 }
 
-// OptGoogleClientID sets the Google OAuth client ID.
-// DEPRECATED: use OptGoogleOAuth instead.
-func OptGoogleClientID(clientID string) Option {
-	return func(o *opts) {
-		if o.GoogleCfg == nil {
-			o.GoogleCfg = &GoogleOAuthConfig{}
-		}
-		o.GoogleCfg.ClientID = clientID
-	}
-}
-
-// OptGoogleClientSecret sets the Google OAuth client secret.
-// DEPRECATED: use OptGoogleOAuth instead.
-func OptGoogleClientSecret(clientSecret string) Option {
-	return func(o *opts) {
-		if o.GoogleCfg == nil {
-			o.GoogleCfg = &GoogleOAuthConfig{}
-		}
-		o.GoogleCfg.ClientSecret = clientSecret
-	}
-}
-
-// OptDiscordClientID sets the Discord OAuth client ID.
-// DEPRECATED: use OptDiscordOAuth instead.
-func OptDiscordClientID(clientID string) Option {
-	return func(o *opts) {
-		if o.DiscordCfg == nil {
-			o.DiscordCfg = &DiscordOAuthConfig{}
-		}
-		o.DiscordCfg.ClientID = clientID
-	}
-}
-
-// OptDiscordClientSecret sets the Discord OAuth client secret.
-// DEPRECATED: use OptDiscordOAuth instead.
-func OptDiscordClientSecret(clientSecret string) Option {
-	return func(o *opts) {
-		if o.DiscordCfg == nil {
-			o.DiscordCfg = &DiscordOAuthConfig{}
-		}
-		o.DiscordCfg.ClientSecret = clientSecret
-	}
-}
-
 type opts struct {
 	GoogleCfg  *GoogleOAuthConfig
 	DiscordCfg *DiscordOAuthConfig
